@@ -261,7 +261,7 @@
     </div>
 
     <div id="modal">
-        <div class="modal-content">
+        <form class="modal-content" onsubmit="confirmar(event)">
             <h3 id="modal-titulo" style="font-family: 'Playfair Display'; margin: 0;"></h3>
             <p id="modal-subtitulo" style="font-size: 0.85rem; color: #777; margin-top: 5px; font-weight: bold;"></p>
 
@@ -278,12 +278,12 @@
                 <input type="file" id="fotoComprovante" accept="image/*">
             </div>
 
-            <button class="btn-agendar" style="width: 100%; padding: 12px;" onclick="confirmar()">Confirmar
-                Agendamento</button>
-            <button
+            <button type="submit" id="btnConfirmarGeral" class="btn-agendar"
+                style="width: 100%; padding: 12px;">Confirmar Agendamento</button>
+            <button type="button"
                 style="background:none; border:none; color: grey; cursor:pointer; margin-top:15px; font-size: 0.8rem;"
                 onclick="fechar()">Voltar</button>
-        </div>
+        </form>
     </div>
 
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
@@ -306,16 +306,6 @@
         const turnos = [{ label: "Manhã", i: 8, f: 12 }, { label: "Tarde", i: 13, f: 18 }];
         let idGlobal = null;
         let cliquesAdmin = 0;
-
-        function activarAdmin() {
-            cliquesAdmin++;
-            if (cliquesAdmin >= 5) {
-                document.getElementById('painel-admin').style.display = 'block';
-                carregarAdmin();
-                alert("Modo Administrador Ativado!");
-                cliquesAdmin = 0;
-            }
-        }
 
         function ativarAdmin() {
             cliquesAdmin++;
@@ -354,7 +344,6 @@
                         let chave = `${input.value}_${h}:00`;
                         let ocupado = agendados[chave];
 
-                        // Exibe apenas o nome da cliente na agenda pública
                         let nomeExibir = ocupado ? (typeof ocupado === 'object' ? ocupado.nome : ocupado) : "";
 
                         container.innerHTML += `
@@ -362,7 +351,7 @@
                             <span>${h}:00</span>
                             <div>
                                 ${ocupado ? `<span style="color:#b5b5b5; font-size:0.75rem;">Reservado (${nomeExibir})</span>`
-                                : `<button class="btn-agendar" onclick="abrirModal('${chave}', '${h}:00')">Agendar</button>`}
+                                : `<button type="button" class="btn-agendar" onclick="abrirModal('${chave}', '${h}:00')">Agendar</button>`}
                             </div>
                         </div>`;
                     }
@@ -381,37 +370,68 @@
             document.getElementById('modal').style.display = 'none';
             document.getElementById('nomeCliente').value = "";
             document.getElementById('fotoComprovante').value = "";
+            document.getElementById('btnConfirmarGeral').innerText = "Confirmar Agendamento";
+            document.getElementById('btnConfirmarGeral').disabled = false;
         }
 
-        function confirmar() {
+        // COMPACTA A FOTO E SALVA SEM RECARREGAR A TELA
+        function confirmar(event) {
+            if (event) event.preventDefault();
+
             const nome = document.getElementById('nomeCliente').value;
             const arquivoInput = document.getElementById('fotoComprovante');
+            const botao = document.getElementById('btnConfirmarGeral');
 
             if (!nome) return alert("Por favor, digite seu nome.");
             if (arquivoInput.files.length === 0) return alert("Por favor, anexe a imagem do comprovante do Pix para concluir.");
 
+            botao.innerText = "Enviando... Aguarde";
+            botao.disabled = true;
+
             const arquivo = arquivoInput.files[0];
             const reader = new FileReader();
 
-            // Transforma a imagem em código de texto para salvar no banco
             reader.onloadend = function () {
-                const base64Imagem = reader.result;
+                const img = new Image();
+                img.src = reader.result;
 
-                const dadosAgendamento = {
-                    nome: nome,
-                    comprovante: base64Imagem
+                img.onload = function () {
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+
+                    const max_width = 600;
+                    let width = img.width;
+                    let height = img.height;
+
+                    if (width > max_width) {
+                        height = Math.round((height * max_width) / width);
+                        width = max_width;
+                    }
+
+                    canvas.width = width;
+                    canvas.height = height;
+                    ctx.drawImage(img, 0, 0, width, height);
+
+                    const base64ImagemCompacta = canvas.toDataURL('image/jpeg', 0.6);
+
+                    const dadosAgendamento = {
+                        nome: nome,
+                        comprovante: base64ImagemCompacta
+                    };
+
+                    database.ref('agendamentos/' + idGlobal).set(dadosAgendamento)
+                        .then(() => {
+                            alert("Sucesso! Seu agendamento e comprovante foram enviados. Aguarde a validação no dia do atendimento.");
+                            fechar();
+                            atualizarAgenda();
+                            if (document.getElementById('painel-admin').style.display === 'block') carregarAdmin();
+                        })
+                        .catch((error) => {
+                            alert("Erro ao salvar: " + error.message);
+                            botao.innerText = "Confirmar Agendamento";
+                            botao.disabled = false;
+                        });
                 };
-
-                database.ref('agendamentos/' + idGlobal).set(dadosAgendamento)
-                    .then(() => {
-                        alert("Sucesso! Seu agendamento e comprovante foram enviados. Aguarde a validação no dia do atendimento.");
-                        fechar();
-                        atualizarAgenda();
-                        if (document.getElementById('painel-admin').style.display === 'block') carregarAdmin();
-                    })
-                    .catch((error) => {
-                        alert("Erro ao salvar: " + error.message);
-                    });
             };
 
             reader.readAsDataURL(arquivo);
@@ -441,8 +461,8 @@
                     <div class="admin-item">
                         <strong>${data.split('-').reverse().join('/')} às ${hora}</strong><br>
                         Cliente: ${nomeCliente}<br>
-                        ${temComprovante ? `<button class="btn-ver-comprovante" onclick="verFoto('${chave}')">👁️ Ver Comprovante</button>` : ''}
-                        <button class="btn-excluir" onclick="remover('${chave}')">Excluir</button>
+                        ${temComprovante ? `<button type="button" class="btn-ver-comprovante" onclick="verFoto('${chave}')">👁️ Ver Comprovante</button>` : ''}
+                        <button type="button" class="btn-excluir" onclick="remover('${chave}')">Excluir</button>
                     </div>`;
 
                     lista.innerHTML += htmlItem;
@@ -454,7 +474,6 @@
             database.ref('agendamentos/' + chave).once('value').then((snapshot) => {
                 const info = snapshot.val();
                 if (info && info.comprovante) {
-                    // Abre a imagem do comprovante em uma nova aba do navegador
                     const novaAba = window.open();
                     novaAba.document.write(`<img src="${info.comprovante}" style="max-width:100%; height:auto;" alt="Comprovante Pix">`);
                 } else {
